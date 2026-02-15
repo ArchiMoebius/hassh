@@ -217,7 +217,23 @@ func parseNameList(data []byte, offset int) (names []string, newOffset int, err 
 	return sanitized, offset, nil
 }
 
-// ParseKexInit extracts algorithm lists from SSH_MSG_KEXINIT (RFC 4253 §7.1)
+// ParseKexInit extracts algorithm lists from SSH_MSG_KEXINIT (RFC 4253 §7.1) which specifies the complete packet structure:
+//
+//	byte         SSH_MSG_KEXINIT (20)
+//	byte[16]     cookie (random bytes)
+//	name-list    kex_algorithms
+//	name-list    server_host_key_algorithms
+//	name-list    encryption_algorithms_client_to_server
+//	name-list    encryption_algorithms_server_to_client
+//	name-list    mac_algorithms_client_to_server
+//	name-list    mac_algorithms_server_to_client
+//	name-list    compression_algorithms_client_to_server
+//	name-list    compression_algorithms_server_to_client
+//	name-list    languages_client_to_server
+//	name-list    languages_server_to_client
+//	boolean      first_kex_packet_follows
+//	uint32       0 (reserved for future extension)
+//
 // with comprehensive security validations and panic recovery
 //
 // SECURITY: This is the primary public API and includes panic recovery to prevent
