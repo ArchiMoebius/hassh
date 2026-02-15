@@ -48,7 +48,7 @@ func NewListCmd(repo *storage.Repository) *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, "HASSH\tBANNER\tIPs\tCONNS\tLAST SEEN\tBLOCKED")
+			_, _ = fmt.Fprintln(w, "HASSH\tBANNER\tIPs\tCONNS\tLAST SEEN\tBLOCKED")
 
 			for _, s := range summaries {
 				blocked := "no"
@@ -62,7 +62,7 @@ func NewListCmd(repo *storage.Repository) *cobra.Command {
 					banner = banner[:42] + "..."
 				}
 
-				fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n",
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%s\t%s\n",
 					s.HASSHFingerprint,
 					banner,
 					s.IPCount,

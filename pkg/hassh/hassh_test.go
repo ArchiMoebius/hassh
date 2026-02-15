@@ -110,9 +110,9 @@ func TestIsValidAlgorithmName_ConstantTime(t *testing.T) {
 
 	// Warm up
 	for i := 0; i < 1000; i++ {
-		isValidAlgorithmName(validName)
-		isValidAlgorithmName(invalidStart)
-		isValidAlgorithmName(invalidEnd)
+		_ = isValidAlgorithmName(validName)
+		_ = isValidAlgorithmName(invalidStart)
+		_ = isValidAlgorithmName(invalidEnd)
 	}
 
 	// Measure timings
@@ -120,19 +120,19 @@ func TestIsValidAlgorithmName_ConstantTime(t *testing.T) {
 
 	start := time.Now()
 	for i := 0; i < iterations; i++ {
-		isValidAlgorithmName(validName)
+		_ = isValidAlgorithmName(validName)
 	}
 	validDuration := time.Since(start)
 
 	start = time.Now()
 	for i := 0; i < iterations; i++ {
-		isValidAlgorithmName(invalidStart)
+		_ = isValidAlgorithmName(invalidStart)
 	}
 	invalidStartDuration := time.Since(start)
 
 	start = time.Now()
 	for i := 0; i < iterations; i++ {
-		isValidAlgorithmName(invalidEnd)
+		_ = isValidAlgorithmName(invalidEnd)
 	}
 	invalidEndDuration := time.Since(start)
 

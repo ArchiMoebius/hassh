@@ -33,12 +33,14 @@ dep: ## Get the dependencies
 	@go install github.com/boumenot/gocover-cobertura@latest
 	@go install github.com/securego/gosec/v2/cmd/gosec@latest
 	@go install github.com/goreleaser/goreleaser/v2@latest
+	@curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.9.0
 
 lint:
 	@env CGO_ENABLED=0 go fmt ${GOFILES}
 	@env CGO_ENABLED=0 go vet ${GOFILESNOTEST}
+	@golangci-lint run ./...
 
-security: dep tidy
+security: tidy
 	@go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet ./...
 	@go run github.com/go-critic/go-critic/cmd/gocritic@latest check -enableAll -disable='#experimental,#opinionated' ./...
 	@go run github.com/google/osv-scanner/cmd/osv-scanner@latest -r . || echo "oh snap!"

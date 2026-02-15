@@ -65,7 +65,9 @@ func BenchmarkKEXINITParsing_RealWorld(b *testing.B) {
 // BenchmarkConnectionRate measures maximum connection rate with fingerprinting
 func BenchmarkConnectionRate(b *testing.B) {
 	server, _ := setupTestSSHServer(b)
-	defer server.Close()
+	defer func() {
+		_ = server.Close()
+	}()
 
 	clientConfig := &ssh.ClientConfig{
 		User:            "testuser",
@@ -92,7 +94,7 @@ func BenchmarkConnectionRate(b *testing.B) {
 						if err != nil {
 							return
 						}
-						conn.Close()
+						_ = conn.Close()
 					}()
 				}
 			})
@@ -302,7 +304,10 @@ func setupTestSSHServer(b *testing.B) (net.Listener, *ssh.ServerConfig) {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+
+				defer func() {
+					_ = c.Close()
+				}()
 				_, _, _, _ = ssh.NewServerConn(c, config)
 			}(conn)
 		}

@@ -93,7 +93,10 @@ func acceptWithContext(ctx context.Context, listener net.Listener) (net.Conn, er
 
 	if dl, ok := listener.(deadliner); ok {
 		_ = dl.SetDeadline(time.Now().Add(1 * time.Second))
-		defer dl.SetDeadline(time.Time{})
+
+		defer func() {
+			_ = dl.SetDeadline(time.Time{})
+		}()
 	}
 
 	connChan := make(chan net.Conn, 1)
@@ -132,10 +135,15 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
-	defer listener.Close()
+	defer func() {
+		_ = listener.Close()
+	}()
 
 	if s.syslog != nil {
-		defer s.syslog.Close()
+
+		defer func() {
+			_ = s.syslog.Close()
+		}()
 	}
 
 	log.Printf("SSH proxy listening on %s -> %s", s.listenAddr, s.targetAddr)
@@ -195,7 +203,9 @@ func (s *Server) handleReloads(ctx context.Context) {
 
 // handleConnection processes a single SSH connection
 func (s *Server) handleConnection(clientConn net.Conn) {
-	defer clientConn.Close()
+	defer func() {
+		_ = clientConn.Close()
+	}()
 
 	connID := s.connCounter.Add(1)
 
@@ -235,7 +245,9 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 		}
 		return
 	}
-	defer upstreamConn.Close()
+	defer func() {
+		_ = upstreamConn.Close()
+	}()
 
 	// Get the actual local address used for upstream connection
 	upstreamLocalAddr := upstreamConn.LocalAddr().(*net.TCPAddr)

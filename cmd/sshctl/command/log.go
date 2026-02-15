@@ -48,7 +48,7 @@ func NewLogCmd(repo *storage.Repository) *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintln(w, "ID\tTIMESTAMP\tIP ADDRESS\tHASSH\tBANNER\tBLOCKED")
+			_, _ = fmt.Fprintln(w, "ID\tTIMESTAMP\tIP ADDRESS\tHASSH\tBANNER\tBLOCKED")
 
 			for _, conn := range connections {
 				blocked := "no"
@@ -62,7 +62,7 @@ func NewLogCmd(repo *storage.Repository) *cobra.Command {
 					banner = banner[:37] + "..."
 				}
 
-				fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
+				_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
 					conn.ID,
 					conn.Timestamp.Format("2006-01-02 15:04:05"),
 					conn.IPAddress,

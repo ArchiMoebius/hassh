@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
-	"sync"
 
 	"sshproxy/pkg/hassh"
 )
@@ -22,7 +21,6 @@ type SSHConn struct {
 	net.Conn
 	onHandshake func(*hassh.Fingerprint) bool
 	captureBuf  *bytes.Buffer
-	captureOnce sync.Once
 	captured    bool
 	blocked     bool
 }
