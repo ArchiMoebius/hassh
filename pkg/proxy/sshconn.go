@@ -1,3 +1,4 @@
+// pkg/proxy/sshconn.go
 package proxy
 
 import (
@@ -5,100 +6,129 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sync"
 
 	"sshproxy/pkg/hassh"
 )
 
 const (
-	maxPacketSize = 35000
-	sshMsgKexInit = 20
+	maxPacketSize  = 35000
+	sshMsgKexInit  = 20
+	maxCaptureSize = 8192
 )
 
 // SSHConn wraps a connection to intercept SSH handshake
 type SSHConn struct {
 	net.Conn
-	onHandshake  func(*hassh.Fingerprint) bool
-	buf          []byte
-	versionRead  bool
-	captured     bool
-	clientBanner string
+	onHandshake func(*hassh.Fingerprint) bool
+	captureBuf  *bytes.Buffer
+	captureOnce sync.Once
+	captured    bool
+	blocked     bool
 }
 
 // NewSSHConn creates a wrapped connection with handshake callback
-// Callback returns true to block the connection
 func NewSSHConn(conn net.Conn, onHandshake func(*hassh.Fingerprint) bool) *SSHConn {
 	return &SSHConn{
 		Conn:        conn,
 		onHandshake: onHandshake,
-		buf:         make([]byte, 0, 4096),
+		captureBuf:  bytes.NewBuffer(make([]byte, 0, maxCaptureSize)),
 	}
 }
 
+// Read wraps the underlying read to capture handshake data
 func (c *SSHConn) Read(b []byte) (int, error) {
 	n, err := c.Conn.Read(b)
 
-	if n > 0 && !c.captured {
-		c.buf = append(c.buf, b[:n]...)
+	// Capture data for HASSH analysis (but don't consume it)
+	if n > 0 && !c.captured && c.captureBuf.Len() < maxCaptureSize {
+		c.captureBuf.Write(b[:n])
+
+		// Try to parse what we have so far
 		if c.tryParseHandshake() {
-			// Connection blocked by callback
-			return 0, io.EOF
+			c.captured = true
+
+			// If blocked, close the connection
+			if c.blocked {
+				return n, io.EOF
+			}
 		}
 	}
 
 	return n, err
 }
 
-// tryParseHandshake attempts to extract HASSH from buffered data
+// tryParseHandshake attempts to extract HASSH from captured data
 func (c *SSHConn) tryParseHandshake() bool {
-	// Step 1: Parse SSH version banner
-	if !c.versionRead {
-		if idx := bytes.Index(c.buf, []byte("SSH-")); idx >= 0 {
-			if end := bytes.Index(c.buf[idx:], []byte("\r\n")); end > 0 {
-				c.clientBanner = string(c.buf[idx : idx+end])
-				c.versionRead = true
-				c.buf = c.buf[idx+end+2:]
-			}
-		}
+	buf := c.captureBuf.Bytes()
+
+	// Need minimum data
+	if len(buf) < 10 {
+		return false
 	}
 
-	// Step 2: Parse binary packet for KEXINIT
-	if c.versionRead && !c.captured && len(c.buf) >= 5 {
-		packetLen := binary.BigEndian.Uint32(c.buf[0:4])
-
-		// Validate packet length
-		if packetLen < 1 || packetLen > maxPacketSize || len(c.buf) < int(4+packetLen) {
-			return false
-		}
-
-		paddingLen := int(c.buf[4])
-		payloadLen := int(packetLen) - paddingLen - 1
-
-		if payloadLen <= 0 || 5+payloadLen > len(c.buf) {
-			return false
-		}
-
-		payload := c.buf[5 : 5+payloadLen]
-
-		// Check for SSH_MSG_KEXINIT
-		if len(payload) > 0 && payload[0] == sshMsgKexInit {
-			kex, ciphers, macs, compression, err := hassh.ParseKexInit(payload)
-			if err != nil {
-				return false
-			}
-
-			fingerprint := &hassh.Fingerprint{
-				Hash:         hassh.Calculate(kex, ciphers, macs, compression),
-				ClientBanner: c.clientBanner,
-				RemoteAddr:   c.Conn.RemoteAddr().String(),
-			}
-
-			c.captured = true
-
-			if c.onHandshake != nil {
-				return c.onHandshake(fingerprint)
-			}
-		}
+	// Step 1: Find and parse SSH version banner
+	idx := bytes.Index(buf, []byte("SSH-"))
+	if idx == -1 {
+		return false
 	}
 
-	return false
+	endIdx := bytes.Index(buf[idx:], []byte("\r\n"))
+	if endIdx == -1 {
+		return false // Need more data for complete banner
+	}
+
+	clientBanner := string(buf[idx : idx+endIdx])
+	bannerEnd := idx + endIdx + 2
+
+	// Step 2: Parse binary SSH packet
+	if len(buf) < bannerEnd+5 {
+		return false // Need at least packet length field
+	}
+
+	packetBuf := buf[bannerEnd:]
+	packetLen := binary.BigEndian.Uint32(packetBuf[0:4])
+
+	// Validate packet length
+	if packetLen < 1 || packetLen > maxPacketSize {
+		return false
+	}
+
+	totalPacketLen := 4 + int(packetLen)
+	if len(packetBuf) < totalPacketLen {
+		return false // Need complete packet
+	}
+
+	paddingLen := int(packetBuf[4])
+	payloadLen := int(packetLen) - paddingLen - 1
+
+	if payloadLen <= 0 || 5+payloadLen > len(packetBuf) {
+		return false
+	}
+
+	payload := packetBuf[5 : 5+payloadLen]
+
+	// Check for SSH_MSG_KEXINIT
+	if len(payload) == 0 || payload[0] != sshMsgKexInit {
+		return false
+	}
+
+	// Parse KEXINIT
+	kex, ciphers, macs, compression, err := hassh.ParseKexInit(payload)
+	if err != nil {
+		return false
+	}
+
+	// We have everything we need!
+	fingerprint := &hassh.Fingerprint{
+		Hash:         hassh.Calculate(kex, ciphers, macs, compression),
+		ClientBanner: clientBanner,
+		RemoteAddr:   c.Conn.RemoteAddr().String(),
+	}
+
+	if c.onHandshake != nil {
+		c.blocked = c.onHandshake(fingerprint)
+	}
+
+	return true
 }

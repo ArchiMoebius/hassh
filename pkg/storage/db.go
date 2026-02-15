@@ -1,4 +1,3 @@
-// pkg/storage/db.go
 package storage
 
 import (
@@ -243,11 +242,88 @@ func (r *Repository) LoadBlockedHashes() ([]string, error) {
 
 // ConnectionDetail contains denormalized connection information for display
 type ConnectionDetail struct {
+	ID               uint
 	Timestamp        time.Time
 	IPAddress        string
 	HASSHFingerprint string
 	SSHClientBanner  string
 	Blocked          bool
+}
+
+// ListConnections retrieves connections with filtering and sorting
+func (r *Repository) ListConnections(limit int, blocked *bool, sortBy string, reverse bool) ([]ConnectionDetail, error) {
+	type queryResult struct {
+		ID               uint      `gorm:"column:id"`
+		Timestamp        time.Time `gorm:"column:timestamp"`
+		IPVersion        uint8     `gorm:"column:ip_version"`
+		IPAddressBytes   []byte    `gorm:"column:ip_address_bytes"`
+		HASSHFingerprint string    `gorm:"column:hassh_fingerprint"`
+		SSHClientBanner  string    `gorm:"column:ssh_client_banner"`
+		Blocked          bool      `gorm:"column:blocked"`
+	}
+
+	var results []queryResult
+
+	query := r.db.Table("ssh_connections").
+		Select(`
+			ssh_connections.id as id,
+			ssh_connections.timestamp as timestamp,
+			ip_addresses.version as ip_version,
+			ip_addresses.address as ip_address_bytes,
+			hassh_fingerprints.fingerprint as hassh_fingerprint,
+			ssh_client_banners.banner as ssh_client_banner,
+			ssh_connections.blocked as blocked
+		`).
+		Joins("JOIN ip_addresses ON ip_addresses.id = ssh_connections.ip_address_id").
+		Joins("JOIN hassh_fingerprints ON hassh_fingerprints.id = ssh_connections.hassh_fingerprint_id").
+		Joins("JOIN ssh_client_banners ON ssh_client_banners.id = ssh_connections.ssh_client_banner_id")
+
+	if blocked != nil {
+		query = query.Where("ssh_connections.blocked = ?", *blocked)
+	}
+
+	// Map sortBy to actual column
+	var orderColumn string
+	switch sortBy {
+	case "timestamp":
+		orderColumn = "ssh_connections.timestamp"
+	case "ip":
+		orderColumn = "ip_addresses.address"
+	case "hassh":
+		orderColumn = "hassh_fingerprints.fingerprint"
+	default:
+		orderColumn = "ssh_connections.timestamp"
+	}
+
+	if reverse {
+		orderColumn += " DESC"
+	} else {
+		orderColumn += " ASC"
+	}
+
+	query = query.Order(orderColumn)
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if err := query.Find(&results).Error; err != nil {
+		return nil, err
+	}
+
+	details := make([]ConnectionDetail, len(results))
+	for i, r := range results {
+		details[i] = ConnectionDetail{
+			ID:               r.ID,
+			Timestamp:        r.Timestamp,
+			IPAddress:        ipToString(r.IPVersion, r.IPAddressBytes),
+			HASSHFingerprint: r.HASSHFingerprint,
+			SSHClientBanner:  r.SSHClientBanner,
+			Blocked:          r.Blocked,
+		}
+	}
+
+	return details, nil
 }
 
 // GetConnectionHistory retrieves recent connections for an IP
@@ -257,17 +333,28 @@ func (r *Repository) GetConnectionHistory(ipStr string, limit int) ([]Connection
 		return nil, err
 	}
 
-	var results []struct {
-		Timestamp        time.Time
-		IPVersion        uint8
-		IPAddressBytes   []byte
-		HASSHFingerprint string
-		SSHClientBanner  string
-		Blocked          bool
+	type queryResult struct {
+		ID               uint      `gorm:"column:id"`
+		Timestamp        time.Time `gorm:"column:timestamp"`
+		IPVersion        uint8     `gorm:"column:ip_version"`
+		IPAddressBytes   []byte    `gorm:"column:ip_address_bytes"`
+		HASSHFingerprint string    `gorm:"column:hassh_fingerprint"`
+		SSHClientBanner  string    `gorm:"column:ssh_client_banner"`
+		Blocked          bool      `gorm:"column:blocked"`
 	}
 
-	err = r.db.Model(&SSHConnection{}).
-		Select("ssh_connections.timestamp, ip_addresses.version as ip_version, ip_addresses.address as ip_address_bytes, hassh_fingerprints.fingerprint as hassh_fingerprint, ssh_client_banners.banner as ssh_client_banner, ssh_connections.blocked").
+	var results []queryResult
+
+	err = r.db.Table("ssh_connections").
+		Select(`
+			ssh_connections.id as id,
+			ssh_connections.timestamp as timestamp,
+			ip_addresses.version as ip_version,
+			ip_addresses.address as ip_address_bytes,
+			hassh_fingerprints.fingerprint as hassh_fingerprint,
+			ssh_client_banners.banner as ssh_client_banner,
+			ssh_connections.blocked as blocked
+		`).
 		Joins("JOIN ip_addresses ON ip_addresses.id = ssh_connections.ip_address_id").
 		Joins("JOIN hassh_fingerprints ON hassh_fingerprints.id = ssh_connections.hassh_fingerprint_id").
 		Joins("JOIN ssh_client_banners ON ssh_client_banners.id = ssh_connections.ssh_client_banner_id").
@@ -280,10 +367,10 @@ func (r *Repository) GetConnectionHistory(ipStr string, limit int) ([]Connection
 		return nil, err
 	}
 
-	// Convert binary IPs back to strings
 	details := make([]ConnectionDetail, len(results))
 	for i, r := range results {
 		details[i] = ConnectionDetail{
+			ID:               r.ID,
 			Timestamp:        r.Timestamp,
 			IPAddress:        ipToString(r.IPVersion, r.IPAddressBytes),
 			HASSHFingerprint: r.HASSHFingerprint,
@@ -297,32 +384,63 @@ func (r *Repository) GetConnectionHistory(ipStr string, limit int) ([]Connection
 
 // GetAllConnections retrieves recent connections across all IPs
 func (r *Repository) GetAllConnections(limit int) ([]ConnectionDetail, error) {
-	var results []struct {
-		Timestamp        time.Time
-		IPVersion        uint8
-		IPAddressBytes   []byte
-		HASSHFingerprint string
-		SSHClientBanner  string
-		Blocked          bool
+	return r.ListConnections(limit, nil, "timestamp", true)
+}
+
+// SearchConnections searches connections by IP, HASSH, or banner
+func (r *Repository) SearchConnections(ip, hassh, banner string, limit int) ([]ConnectionDetail, error) {
+	type queryResult struct {
+		ID               uint      `gorm:"column:id"`
+		Timestamp        time.Time `gorm:"column:timestamp"`
+		IPVersion        uint8     `gorm:"column:ip_version"`
+		IPAddressBytes   []byte    `gorm:"column:ip_address_bytes"`
+		HASSHFingerprint string    `gorm:"column:hassh_fingerprint"`
+		SSHClientBanner  string    `gorm:"column:ssh_client_banner"`
+		Blocked          bool      `gorm:"column:blocked"`
 	}
 
-	err := r.db.Model(&SSHConnection{}).
-		Select("ssh_connections.timestamp, ip_addresses.version as ip_version, ip_addresses.address as ip_address_bytes, hassh_fingerprints.fingerprint as hassh_fingerprint, ssh_client_banners.banner as ssh_client_banner, ssh_connections.blocked").
+	var results []queryResult
+
+	query := r.db.Table("ssh_connections").
+		Select(`
+			ssh_connections.id as id,
+			ssh_connections.timestamp as timestamp,
+			ip_addresses.version as ip_version,
+			ip_addresses.address as ip_address_bytes,
+			hassh_fingerprints.fingerprint as hassh_fingerprint,
+			ssh_client_banners.banner as ssh_client_banner,
+			ssh_connections.blocked as blocked
+		`).
 		Joins("JOIN ip_addresses ON ip_addresses.id = ssh_connections.ip_address_id").
 		Joins("JOIN hassh_fingerprints ON hassh_fingerprints.id = ssh_connections.hassh_fingerprint_id").
-		Joins("JOIN ssh_client_banners ON ssh_client_banners.id = ssh_connections.ssh_client_banner_id").
-		Order("ssh_connections.timestamp DESC").
-		Limit(limit).
-		Find(&results).Error
+		Joins("JOIN ssh_client_banners ON ssh_client_banners.id = ssh_connections.ssh_client_banner_id")
 
-	if err != nil {
+	if ip != "" {
+		query = query.Where("ip_addresses.address LIKE ?", "%"+ip+"%")
+	}
+
+	if hassh != "" {
+		query = query.Where("hassh_fingerprints.fingerprint LIKE ?", "%"+hassh+"%")
+	}
+
+	if banner != "" {
+		query = query.Where("ssh_client_banners.banner LIKE ?", "%"+banner+"%")
+	}
+
+	query = query.Order("ssh_connections.timestamp DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if err := query.Find(&results).Error; err != nil {
 		return nil, err
 	}
 
-	// Convert binary IPs back to strings
 	details := make([]ConnectionDetail, len(results))
 	for i, r := range results {
 		details[i] = ConnectionDetail{
+			ID:               r.ID,
 			Timestamp:        r.Timestamp,
 			IPAddress:        ipToString(r.IPVersion, r.IPAddressBytes),
 			HASSHFingerprint: r.HASSHFingerprint,
@@ -426,4 +544,200 @@ func (r *Repository) GetStatistics() (struct {
 	r.db.Model(&SSHClientBanner{}).Count(&stats.UniqueBanners)
 
 	return stats, nil
+}
+
+// HASSHSummary contains aggregated information about a HASSH fingerprint
+type HASSHSummary struct {
+	HASSHFingerprint string
+	SSHClientBanner  string
+	IPCount          int
+	LastSeen         time.Time
+	FirstSeen        time.Time
+	TotalConnections int
+	Blocked          bool
+}
+
+// ListHASSHSummaries retrieves aggregated HASSH fingerprint information
+func (r *Repository) ListHASSHSummaries(limit int, blocked *bool, sortBy string, reverse bool) ([]HASSHSummary, error) {
+	type queryResult struct {
+		HASSHFingerprint string `gorm:"column:hassh_fingerprint"`
+		SSHClientBanner  string `gorm:"column:ssh_client_banner"`
+		IPCount          int    `gorm:"column:ip_count"`
+		LastSeen         string `gorm:"column:last_seen"`
+		FirstSeen        string `gorm:"column:first_seen"`
+		TotalConnections int    `gorm:"column:total_connections"`
+		IsBlocked        int    `gorm:"column:is_blocked"`
+	}
+
+	var results []queryResult
+
+	query := r.db.Table("ssh_connections").
+		Select(`
+			hassh_fingerprints.fingerprint as hassh_fingerprint,
+			ssh_client_banners.banner as ssh_client_banner,
+			COUNT(DISTINCT ip_addresses.address) as ip_count,
+			MAX(ssh_connections.timestamp) as last_seen,
+			MIN(ssh_connections.timestamp) as first_seen,
+			COUNT(*) as total_connections,
+			CASE WHEN blocked_fingerprints.id IS NOT NULL THEN 1 ELSE 0 END as is_blocked
+		`).
+		Joins("JOIN ip_addresses ON ip_addresses.id = ssh_connections.ip_address_id").
+		Joins("JOIN hassh_fingerprints ON hassh_fingerprints.id = ssh_connections.hassh_fingerprint_id").
+		Joins("JOIN ssh_client_banners ON ssh_client_banners.id = ssh_connections.ssh_client_banner_id").
+		Joins("LEFT JOIN blocked_fingerprints ON blocked_fingerprints.hassh_fingerprint_id = hassh_fingerprints.id").
+		Group("hassh_fingerprints.fingerprint, ssh_client_banners.banner, blocked_fingerprints.id")
+
+	if blocked != nil {
+		if *blocked {
+			query = query.Having("is_blocked = 1")
+		} else {
+			query = query.Having("is_blocked = 0")
+		}
+	}
+
+	// Map sortBy to actual column
+	var orderColumn string
+	switch sortBy {
+	case "last_seen":
+		orderColumn = "last_seen"
+	case "ip_count":
+		orderColumn = "ip_count"
+	case "total":
+		orderColumn = "total_connections"
+	case "hassh":
+		orderColumn = "hassh_fingerprint"
+	case "banner":
+		orderColumn = "ssh_client_banner"
+	default:
+		orderColumn = "last_seen"
+	}
+
+	if reverse {
+		orderColumn += " DESC"
+	} else {
+		orderColumn += " ASC"
+	}
+
+	query = query.Order(orderColumn)
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if err := query.Find(&results).Error; err != nil {
+		return nil, err
+	}
+
+	// Convert results to HASSHSummary with proper time parsing
+	summaries := make([]HASSHSummary, len(results))
+	for i, r := range results {
+		lastSeen, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", r.LastSeen)
+		if err != nil {
+			lastSeen, err = time.Parse("2006-01-02 15:04:05", r.LastSeen)
+			if err != nil {
+				lastSeen = time.Time{}
+			}
+		}
+
+		firstSeen, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", r.FirstSeen)
+		if err != nil {
+			firstSeen, err = time.Parse("2006-01-02 15:04:05", r.FirstSeen)
+			if err != nil {
+				firstSeen = time.Time{}
+			}
+		}
+
+		summaries[i] = HASSHSummary{
+			HASSHFingerprint: r.HASSHFingerprint,
+			SSHClientBanner:  r.SSHClientBanner,
+			IPCount:          r.IPCount,
+			LastSeen:         lastSeen,
+			FirstSeen:        firstSeen,
+			TotalConnections: r.TotalConnections,
+			Blocked:          r.IsBlocked == 1,
+		}
+	}
+
+	return summaries, nil
+}
+
+// SearchHASSHSummaries searches HASSH summaries
+func (r *Repository) SearchHASSHSummaries(hassh, banner string, limit int) ([]HASSHSummary, error) {
+	type queryResult struct {
+		HASSHFingerprint string `gorm:"column:hassh_fingerprint"`
+		SSHClientBanner  string `gorm:"column:ssh_client_banner"`
+		IPCount          int    `gorm:"column:ip_count"`
+		LastSeen         string `gorm:"column:last_seen"`
+		FirstSeen        string `gorm:"column:first_seen"`
+		TotalConnections int    `gorm:"column:total_connections"`
+		IsBlocked        int    `gorm:"column:is_blocked"`
+	}
+
+	var results []queryResult
+
+	query := r.db.Table("ssh_connections").
+		Select(`
+			hassh_fingerprints.fingerprint as hassh_fingerprint,
+			ssh_client_banners.banner as ssh_client_banner,
+			COUNT(DISTINCT ip_addresses.address) as ip_count,
+			MAX(ssh_connections.timestamp) as last_seen,
+			MIN(ssh_connections.timestamp) as first_seen,
+			COUNT(*) as total_connections,
+			CASE WHEN blocked_fingerprints.id IS NOT NULL THEN 1 ELSE 0 END as is_blocked
+		`).
+		Joins("JOIN ip_addresses ON ip_addresses.id = ssh_connections.ip_address_id").
+		Joins("JOIN hassh_fingerprints ON hassh_fingerprints.id = ssh_connections.hassh_fingerprint_id").
+		Joins("JOIN ssh_client_banners ON ssh_client_banners.id = ssh_connections.ssh_client_banner_id").
+		Joins("LEFT JOIN blocked_fingerprints ON blocked_fingerprints.hassh_fingerprint_id = hassh_fingerprints.id").
+		Group("hassh_fingerprints.fingerprint, ssh_client_banners.banner, blocked_fingerprints.id")
+
+	if hassh != "" {
+		query = query.Where("hassh_fingerprints.fingerprint LIKE ?", "%"+hassh+"%")
+	}
+
+	if banner != "" {
+		query = query.Where("ssh_client_banners.banner LIKE ?", "%"+banner+"%")
+	}
+
+	query = query.Order("last_seen DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+
+	if err := query.Find(&results).Error; err != nil {
+		return nil, err
+	}
+
+	// Convert results to HASSHSummary with proper time parsing
+	summaries := make([]HASSHSummary, len(results))
+	for i, r := range results {
+		lastSeen, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", r.LastSeen)
+		if err != nil {
+			lastSeen, err = time.Parse("2006-01-02 15:04:05", r.LastSeen)
+			if err != nil {
+				lastSeen = time.Time{}
+			}
+		}
+
+		firstSeen, err := time.Parse("2006-01-02 15:04:05.999999999-07:00", r.FirstSeen)
+		if err != nil {
+			firstSeen, err = time.Parse("2006-01-02 15:04:05", r.FirstSeen)
+			if err != nil {
+				firstSeen = time.Time{}
+			}
+		}
+
+		summaries[i] = HASSHSummary{
+			HASSHFingerprint: r.HASSHFingerprint,
+			SSHClientBanner:  r.SSHClientBanner,
+			IPCount:          r.IPCount,
+			LastSeen:         lastSeen,
+			FirstSeen:        firstSeen,
+			TotalConnections: r.TotalConnections,
+			Blocked:          r.IsBlocked == 1,
+		}
+	}
+
+	return summaries, nil
 }

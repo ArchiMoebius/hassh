@@ -1,3 +1,4 @@
+// cmd/sshproxy/main.go
 package main
 
 import (
@@ -41,7 +42,7 @@ func main() {
 		log.Fatalf("Failed to initialize repository: %v", err)
 	}
 
-	// Create proxy server with bloom filter
+	// Create proxy server
 	server, err := proxy.NewServer(*listenAddr, *targetAddr, repo)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
@@ -60,7 +61,7 @@ func main() {
 		cancel()
 	}()
 
-	log.Println("SSH Proxy with HASSH fingerprinting starting...")
+	log.Println("SSH Proxy with HASSH fingerprinting")
 	log.Println("Send SIGHUP to reload blocklist from database")
 
 	if err := server.Start(ctx); err != nil && err != context.Canceled {

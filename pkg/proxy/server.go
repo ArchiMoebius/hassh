@@ -1,3 +1,4 @@
+// pkg/proxy/server.go
 package proxy
 
 import (
@@ -8,8 +9,10 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"sshproxy/pkg/filter"
 	"sshproxy/pkg/hassh"
@@ -22,8 +25,10 @@ type Server struct {
 	targetAddr  string
 	repo        *storage.Repository
 	blocklist   *filter.BlocklistFilter
+	syslog      *SyslogWriter
 	reloadChan  chan os.Signal
 	connCounter atomic.Uint64
+	activeConns sync.WaitGroup
 }
 
 // NewServer creates a proxy server
@@ -33,6 +38,16 @@ func NewServer(listenAddr, targetAddr string, repo *storage.Repository) (*Server
 		targetAddr: targetAddr,
 		repo:       repo,
 		reloadChan: make(chan os.Signal, 1),
+	}
+
+	// Initialize syslog (optional, continues if unavailable)
+	syslogWriter, err := NewSyslogWriter()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize syslog: %v", err)
+		log.Println("Continuing without syslog support")
+	} else {
+		server.syslog = syslogWriter
+		log.Println("Syslog initialized - writing to auth.log")
 	}
 
 	// Initial blocklist load
@@ -70,6 +85,47 @@ func (s *Server) reloadBlocklist() error {
 	return nil
 }
 
+// acceptWithContext wraps Accept() to respect context cancellation
+func acceptWithContext(ctx context.Context, listener net.Listener) (net.Conn, error) {
+	type deadliner interface {
+		SetDeadline(time.Time) error
+	}
+
+	if dl, ok := listener.(deadliner); ok {
+		dl.SetDeadline(time.Now().Add(1 * time.Second))
+		defer dl.SetDeadline(time.Time{})
+	}
+
+	connChan := make(chan net.Conn, 1)
+	errChan := make(chan error, 1)
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			errChan <- err
+			return
+		}
+		connChan <- conn
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case conn := <-connChan:
+		return conn, nil
+	case err := <-errChan:
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				return nil, err
+			}
+		}
+		return nil, err
+	}
+}
+
 // Start begins accepting connections
 func (s *Server) Start(ctx context.Context) error {
 	listener, err := net.Listen("tcp", s.listenAddr)
@@ -78,29 +134,45 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	defer listener.Close()
 
+	if s.syslog != nil {
+		defer s.syslog.Close()
+	}
+
 	log.Printf("SSH proxy listening on %s -> %s", s.listenAddr, s.targetAddr)
 
 	// Background reload handler
 	go s.handleReloads(ctx)
 
+	// Accept loop with context awareness
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("Shutting down, waiting for active connections to close...")
+			s.activeConns.Wait()
 			return ctx.Err()
 		default:
-			conn, err := listener.Accept()
-			if err != nil {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-					log.Printf("Accept error: %v", err)
-					continue
-				}
+		}
+
+		conn, err := acceptWithContext(ctx, listener)
+		if err != nil {
+			if ctx.Err() != nil {
+				s.activeConns.Wait()
+				return ctx.Err()
 			}
 
-			go s.handleConnection(conn)
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+
+			log.Printf("Accept error: %v", err)
+			continue
 		}
+
+		s.activeConns.Add(1)
+		go func() {
+			defer s.activeConns.Done()
+			s.handleConnection(conn)
+		}()
 	}
 }
 
@@ -126,12 +198,61 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 	defer clientConn.Close()
 
 	connID := s.connCounter.Add(1)
-	clientIP := clientConn.RemoteAddr().(*net.TCPAddr).IP.String()
+
+	clientAddr := clientConn.RemoteAddr().(*net.TCPAddr)
+	clientIP := clientAddr.IP.String()
+	clientPort := clientAddr.Port
+
+	localAddr := clientConn.LocalAddr().(*net.TCPAddr)
+	proxyIP := localAddr.IP.String()
+	proxyPort := localAddr.Port
+
+	// Track upstream connection info and username
+	var upstreamLocalIP string
+	var upstreamLocalPort int
+	var username string
+
+	// Ensure we always log disconnect with full chain
+	defer func() {
+		if s.syslog != nil && upstreamLocalIP != "" {
+			s.syslog.LogDisconnect(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, username)
+		}
+		if upstreamLocalIP != "" {
+			log.Printf("[conn:%d] Disconnected from %s port %d -> %s port %d -> %s port %d -> %s",
+				connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr)
+		} else {
+			log.Printf("[conn:%d] Disconnected from %s port %d -> %s port %d -> %s",
+				connID, clientIP, clientPort, proxyIP, proxyPort, s.targetAddr)
+		}
+	}()
+
+	// Connect to upstream SSH server first to get the local port
+	upstreamConn, err := net.Dial("tcp", s.targetAddr)
+	if err != nil {
+		log.Printf("[conn:%d] Failed to connect to upstream: %v", connID, err)
+		if s.syslog != nil {
+			s.syslog.LogError(connID, clientIP, fmt.Sprintf("Failed to connect to upstream %s: %v", s.targetAddr, err))
+		}
+		return
+	}
+	defer upstreamConn.Close()
+
+	// Get the actual local address used for upstream connection
+	upstreamLocalAddr := upstreamConn.LocalAddr().(*net.TCPAddr)
+	upstreamLocalIP = upstreamLocalAddr.IP.String()
+	upstreamLocalPort = upstreamLocalAddr.Port
+
+	upstreamRemoteAddr := upstreamConn.RemoteAddr().String()
 
 	// Wrap connection to intercept handshake
 	wrappedConn := NewSSHConn(clientConn, func(fp *hassh.Fingerprint) bool {
-		// O(k) bloom filter lookup where k is typically 3-5 hash functions
 		blocked := s.blocklist.Contains(fp.Hash)
+
+		// Log to syslog with full chain including upstream port
+		if s.syslog != nil {
+			s.syslog.LogConnection(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, blocked)
+			s.syslog.LogHandshake(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, fp.Hash, fp.ClientBanner)
+		}
 
 		// Record in database (async to avoid blocking)
 		go func() {
@@ -141,42 +262,39 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 		}()
 
 		if blocked {
-			log.Printf("[conn:%d] BLOCKED: %s (HASSH: %s, Banner: %s)",
-				connID, clientIP, fp.Hash, fp.ClientBanner)
+			log.Printf("[conn:%d] BLOCKED: %s port %d -> %s port %d -> %s port %d -> %s (HASSH: %s, Banner: %s)",
+				connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, fp.Hash, fp.ClientBanner)
 			return true
 		}
 
-		log.Printf("[conn:%d] ALLOWED: %s (HASSH: %s, Banner: %s)",
-			connID, clientIP, fp.Hash, fp.ClientBanner)
+		log.Printf("[conn:%d] ALLOWED: %s port %d -> %s port %d -> %s port %d -> %s (HASSH: %s, Banner: %s)",
+			connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, fp.Hash, fp.ClientBanner)
 		return false
 	})
 
-	// Connect to upstream SSH server
-	upstreamConn, err := net.Dial("tcp", s.targetAddr)
-	if err != nil {
-		log.Printf("[conn:%d] Failed to connect to upstream: %v", connID, err)
-		return
-	}
-	defer upstreamConn.Close()
+	log.Printf("[conn:%d] Proxying: %s port %d -> %s port %d -> %s port %d -> %s",
+		connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, upstreamRemoteAddr)
 
-	log.Printf("[conn:%d] Proxying %s -> %s", connID, clientIP, s.targetAddr)
-
-	// Bidirectional copy
-	errChan := make(chan error, 2)
+	// Bidirectional copy with proper cleanup
+	done := make(chan error, 2)
 
 	go func() {
 		_, err := io.Copy(upstreamConn, wrappedConn)
-		errChan <- err
+		if tcpConn, ok := upstreamConn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
+		done <- err
 	}()
 
 	go func() {
 		_, err := io.Copy(wrappedConn, upstreamConn)
-		errChan <- err
+		if tcpConn, ok := clientConn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
+		done <- err
 	}()
 
-	// Wait for either direction to complete
-	err = <-errChan
-	if err != nil && err != io.EOF {
-		log.Printf("[conn:%d] Proxy error: %v", connID, err)
-	}
+	// Wait for both directions to complete
+	<-done
+	<-done
 }
