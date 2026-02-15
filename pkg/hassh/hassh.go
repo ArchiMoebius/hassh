@@ -2,7 +2,7 @@ package hassh
 
 import (
 	"context"
-	"crypto/md5" // #nosec G401 -- MD5 used for fingerprinting only
+	"crypto/md5" // #nosec G401,G501 -- MD5 used for fingerprinting only
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"

@@ -70,7 +70,10 @@ func NewLogCmd(repo *storage.Repository) *cobra.Command {
 					banner,
 					blocked)
 			}
-			w.Flush()
+			err = w.Flush()
+			if err != nil {
+				return fmt.Errorf("failed to flush: %w", err)
+			}
 
 			return nil
 		},

@@ -1,0 +1,127 @@
+project_name: hassh
+report_sizes: true
+version: 2
+
+before:
+  hooks:
+    - go mod download
+    - go mod tidy
+    - go vet ./...
+    - go test ./pkg/hassh/...
+    - go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet ./...
+    - go run github.com/go-critic/go-critic/cmd/gocritic@latest check -enableAll -disable='#experimental,#opinionated' ./...
+    # - go run github.com/google/osv-scanner/cmd/osv-scanner@latest -r .
+    # - go test -race ./...
+
+builds:
+  - id: sshctl
+    main: ./cmd/sshctl
+    binary: sshctl
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -buildid=
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+    flags: [-trimpath]
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+  - id: sshproxy
+    main: ./cmd/sshproxy
+    binary: sshproxy
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64]
+    ldflags:
+      - -s -w -buildid=
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+      - -X main.builtBy=goreleaser
+    flags: [-trimpath]
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+upx:
+  -
+    ids: [ sshctl, sshproxy ]
+    enabled: true
+    compress: best
+    lzma: true
+    brute: true
+    goos: [ linux ]
+    goarch: [ amd64, arm64 ]
+
+archives:
+  - id: hassh
+    ids: [sshctl, sshproxy]
+  - formats: [ 'zst', 'tgz' ]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files: [README.md, LICENSE, SECURITY.md]
+
+release:
+  ids: [ sshctl, sshproxy ]
+  draft: true
+  replace_existing_draft: true
+  target_commitish: "{{ .Commit }}"
+  #  discussion_category_name: General
+  prerelease: auto
+  mode: replace
+  header: |
+    ## ⚙️ The `{{ .Tag }}` release
+  footer: |
+    ## Notes
+
+    ## Your help to improve project
+
+    I'd be truly grateful for help with:
+
+    - Creating tests (and/or benchmarks) for code.
+    - Improving existing functions, structs, or tests.
+    - Feature requests with interesting functions that would be good to add.
+
+    Your PRs & issues are welcome! Thanks 😉
+
+  disable: false
+  skip_upload: false
+
+changelog:
+#  use: github
+  sort: asc
+  abbrev: -1
+  filters:
+    exclude: [ "^*.md", "^*.ya?ml" ]
+  groups:
+    - title: Features
+      regexp: ^.*?(F|f)eature.*?$
+      order: 0
+    - title: Bug fixes
+      regexp: ^.*?((B|b)ug)|((F|f)ix).*?$
+      order: 1
+    - title: Improvements
+      regexp: ^.*?(I|i)mprove.*?$
+      order: 2
+    - title: Updates
+      regexp: ^.*?(U|u)pdate.*?$
+      order: 3
+    - title: Security issues
+      regexp: ^.*?(S|s)ecurity.*?$
+      order: 4
+    - title: Delete unused or stale
+      regexp: ^.*?((D|d)elete)|((U|u)nused)|((S|s)tale).*?$
+      order: 5
+    - title: Others
+      order: 999
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256

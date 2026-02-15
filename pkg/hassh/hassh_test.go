@@ -346,8 +346,7 @@ func TestParseKexInit_MaximumSizePacket(t *testing.T) {
 	}
 
 	// Add required trailing fields
-	payload = append(payload, 0x00)                   // boolean
-	payload = append(payload, 0x00, 0x00, 0x00, 0x00) // reserved
+	payload = append(append(payload, 0x00), 0x00, 0x00, 0x00, 0x00) // reserved
 
 	// Verify we're well under the limit
 	if len(payload) >= maxPayloadSize {
@@ -399,8 +398,7 @@ func TestParseKexInit_TooManyTotalAlgorithms(t *testing.T) {
 		addNameList(600)
 	}
 
-	payload = append(payload, 0x00)
-	payload = append(payload, 0x00, 0x00, 0x00, 0x00)
+	payload = append(append(payload, 0x00), 0x00, 0x00, 0x00, 0x00)
 
 	_, _, _, _, err := ParseKexInit(payload)
 	if err == nil {
@@ -573,8 +571,7 @@ func buildValidKexInit(t *testing.T) []byte {
 	addNameList("")
 	addNameList("")
 
-	payload = append(payload, 0x00)
-	payload = append(payload, 0x00, 0x00, 0x00, 0x00)
+	payload = append(append(payload, 0x00), 0x00, 0x00, 0x00, 0x00)
 
 	return payload
 }

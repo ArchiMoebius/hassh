@@ -35,7 +35,11 @@ func NewReloadCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVar(&pid, "pid", 0, "PID of proxy process to signal")
-	cmd.MarkFlagRequired("pid")
+	err := cmd.MarkFlagRequired("pid")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 
 	return cmd
 }

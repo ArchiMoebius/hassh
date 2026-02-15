@@ -70,7 +70,10 @@ func NewListCmd(repo *storage.Repository) *cobra.Command {
 					s.LastSeen.Format("2006-01-02 15:04:05"),
 					blocked)
 			}
-			w.Flush()
+			err = w.Flush()
+			if err != nil {
+				return fmt.Errorf("failed to flush: %w", err)
+			}
 
 			return nil
 		},

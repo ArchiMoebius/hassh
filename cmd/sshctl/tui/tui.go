@@ -55,7 +55,7 @@ func tickCmd() tea.Cmd {
 func Run(repo *storage.Repository, limit int) error {
 	m := newModel(repo, limit)
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(&m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
@@ -236,11 +236,11 @@ func (m *model) updateLogsTable() {
 	m.table.SetRows(rows)
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return tickCmd()
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
@@ -262,7 +262,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) handleNormalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleNormalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
@@ -310,18 +310,18 @@ func (m model) handleNormalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "b":
 		// Block selected (only in listing view)
 		if m.mode == viewListing {
-			m = m.blockSelected()
+			*m = m.blockSelected()
 		} else {
-			m = m.blockSelectedFromLogs()
+			*m = m.blockSelectedFromLogs()
 		}
 		return m, nil
 
 	case "u":
 		// Unblock selected
 		if m.mode == viewListing {
-			m = m.unblockSelected()
+			*m = m.unblockSelected()
 		} else {
-			m = m.unblockSelectedFromLogs()
+			*m = m.unblockSelectedFromLogs()
 		}
 		return m, nil
 
@@ -356,7 +356,7 @@ func (m model) handleNormalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg.Type {
@@ -604,7 +604,7 @@ func (m *model) unblockSelectedFromLogs() model {
 	return *m
 }
 
-func (m model) View() string {
+func (m *model) View() string {
 	var b strings.Builder
 
 	// Title with current view

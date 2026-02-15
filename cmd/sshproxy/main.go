@@ -65,7 +65,7 @@ func main() {
 	log.Println("Send SIGHUP to reload blocklist from database")
 
 	if err := server.Start(ctx); err != nil && err != context.Canceled {
-		log.Fatalf("Server error: %v", err)
+		log.Printf("Server error: %v", err)
 	}
 
 	log.Println("Shutdown complete")

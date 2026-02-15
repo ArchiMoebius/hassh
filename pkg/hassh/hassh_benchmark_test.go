@@ -311,8 +311,8 @@ func setupTestSSHServer(b *testing.B) (net.Listener, *ssh.ServerConfig) {
 	return listener, config
 }
 
-func openssh82Algorithms() Algorithms {
-	return Algorithms{
+func openssh82Algorithms() *Algorithms {
+	return &Algorithms{
 		Kex:        []string{"curve25519-sha256", "ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521", "diffie-hellman-group-exchange-sha256", "diffie-hellman-group16-sha512", "diffie-hellman-group18-sha512", "diffie-hellman-group14-sha256"},
 		HostKey:    []string{"rsa-sha2-512", "rsa-sha2-256", "ssh-rsa", "ecdsa-sha2-nistp256", "ssh-ed25519"},
 		CiphersC2S: []string{"chacha20-poly1305@openssh.com", "aes128-ctr", "aes192-ctr", "aes256-ctr", "aes128-gcm@openssh.com", "aes256-gcm@openssh.com"},
@@ -324,8 +324,8 @@ func openssh82Algorithms() Algorithms {
 	}
 }
 
-func putty076Algorithms() Algorithms {
-	return Algorithms{
+func putty076Algorithms() *Algorithms {
+	return &Algorithms{
 		Kex:        []string{"ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521", "diffie-hellman-group16-sha512", "diffie-hellman-group15-sha512", "diffie-hellman-group14-sha256", "diffie-hellman-group14-sha1"},
 		HostKey:    []string{"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa", "ssh-dss"},
 		CiphersC2S: []string{"aes256-gcm@openssh.com", "aes128-gcm@openssh.com", "aes256-ctr", "aes192-ctr", "aes128-ctr"},
@@ -337,8 +337,8 @@ func putty076Algorithms() Algorithms {
 	}
 }
 
-func libssh09Algorithms() Algorithms {
-	return Algorithms{
+func libssh09Algorithms() *Algorithms {
+	return &Algorithms{
 		Kex:        []string{"curve25519-sha256", "ecdh-sha2-nistp256", "ecdh-sha2-nistp384", "ecdh-sha2-nistp521", "diffie-hellman-group18-sha512", "diffie-hellman-group16-sha512"},
 		HostKey:    []string{"ssh-ed25519", "ecdsa-sha2-nistp521", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp256", "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"},
 		CiphersC2S: []string{"chacha20-poly1305@openssh.com", "aes256-gcm@openssh.com", "aes128-gcm@openssh.com", "aes256-ctr", "aes192-ctr", "aes128-ctr"},
@@ -350,8 +350,8 @@ func libssh09Algorithms() Algorithms {
 	}
 }
 
-func dropbear2020Algorithms() Algorithms {
-	return Algorithms{
+func dropbear2020Algorithms() *Algorithms {
+	return &Algorithms{
 		Kex:        []string{"curve25519-sha256", "ecdh-sha2-nistp521", "ecdh-sha2-nistp384", "ecdh-sha2-nistp256", "diffie-hellman-group14-sha256", "diffie-hellman-group14-sha1"},
 		HostKey:    []string{"ssh-ed25519", "ecdsa-sha2-nistp256", "ssh-rsa"},
 		CiphersC2S: []string{"chacha20-poly1305@openssh.com", "aes128-ctr", "aes256-ctr", "aes128-gcm@openssh.com", "aes256-gcm@openssh.com"},
@@ -363,7 +363,7 @@ func dropbear2020Algorithms() Algorithms {
 	}
 }
 
-func buildRealWorldKexInit(b *testing.B, algos Algorithms) []byte {
+func buildRealWorldKexInit(b *testing.B, algos *Algorithms) []byte {
 	b.Helper()
 
 	payload := make([]byte, 0, 2048)
@@ -396,8 +396,7 @@ func buildRealWorldKexInit(b *testing.B, algos Algorithms) []byte {
 	addNameList([]string{}) // languages C2S
 	addNameList([]string{}) // languages S2C
 
-	payload = append(payload, 0x00)                   // boolean
-	payload = append(payload, 0x00, 0x00, 0x00, 0x00) // reserved
+	payload = append(append(payload, 0x00), 0x00, 0x00, 0x00, 0x00) // reserved
 
 	return payload
 }
@@ -437,8 +436,7 @@ func buildComplexKexInit(b *testing.B, algosPerList int, algorithmName string) [
 		addNameList(algosPerList)
 	}
 
-	payload = append(payload, 0x00)
-	payload = append(payload, 0x00, 0x00, 0x00, 0x00)
+	payload = append(append(payload, 0x00), 0x00, 0x00, 0x00, 0x00)
 
 	return payload
 }

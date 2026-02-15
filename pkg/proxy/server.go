@@ -92,7 +92,7 @@ func acceptWithContext(ctx context.Context, listener net.Listener) (net.Conn, er
 	}
 
 	if dl, ok := listener.(deadliner); ok {
-		dl.SetDeadline(time.Now().Add(1 * time.Second))
+		_ = dl.SetDeadline(time.Now().Add(1 * time.Second))
 		defer dl.SetDeadline(time.Time{})
 	}
 
@@ -215,7 +215,7 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 	// Ensure we always log disconnect with full chain
 	defer func() {
 		if s.syslog != nil && upstreamLocalIP != "" {
-			s.syslog.LogDisconnect(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, username)
+			_ = s.syslog.LogDisconnect(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, username)
 		}
 		if upstreamLocalIP != "" {
 			log.Printf("[conn:%d] Disconnected from %s port %d -> %s port %d -> %s port %d -> %s",
@@ -231,7 +231,7 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 	if err != nil {
 		log.Printf("[conn:%d] Failed to connect to upstream: %v", connID, err)
 		if s.syslog != nil {
-			s.syslog.LogError(connID, clientIP, fmt.Sprintf("Failed to connect to upstream %s: %v", s.targetAddr, err))
+			_ = s.syslog.LogError(connID, clientIP, fmt.Sprintf("Failed to connect to upstream %s: %v", s.targetAddr, err))
 		}
 		return
 	}
@@ -250,8 +250,8 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 
 		// Log to syslog with full chain including upstream port
 		if s.syslog != nil {
-			s.syslog.LogConnection(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, blocked)
-			s.syslog.LogHandshake(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, fp.Hash, fp.ClientBanner)
+			_ = s.syslog.LogConnection(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, blocked)
+			_ = s.syslog.LogHandshake(connID, clientIP, clientPort, proxyIP, proxyPort, upstreamLocalIP, upstreamLocalPort, s.targetAddr, fp.Hash, fp.ClientBanner)
 		}
 
 		// Record in database (async to avoid blocking)
@@ -281,7 +281,7 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 	go func() {
 		_, err := io.Copy(upstreamConn, wrappedConn)
 		if tcpConn, ok := upstreamConn.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
+			err = tcpConn.CloseWrite()
 		}
 		done <- err
 	}()
@@ -289,7 +289,7 @@ func (s *Server) handleConnection(clientConn net.Conn) {
 	go func() {
 		_, err := io.Copy(wrappedConn, upstreamConn)
 		if tcpConn, ok := clientConn.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
+			err = tcpConn.CloseWrite()
 		}
 		done <- err
 	}()

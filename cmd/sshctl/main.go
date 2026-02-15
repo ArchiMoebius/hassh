@@ -31,7 +31,11 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.sshctl.yaml)")
 	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "ssh_connections.db", "SQLite database path")
 
-	viper.BindPFlag("db", rootCmd.PersistentFlags().Lookup("db"))
+	err := viper.BindPFlag("db", rootCmd.PersistentFlags().Lookup("db"))
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
 }
 
 func initConfig() {
