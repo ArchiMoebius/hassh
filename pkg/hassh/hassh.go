@@ -1,20 +1,55 @@
 package hassh
 
 import (
+	"context"
 	"crypto/md5" // #nosec G401 -- MD5 used for fingerprinting only
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 )
 
 const (
 	// maxNameListLength prevents DoS via excessive memory allocation
-	// SSH name-lists should be reasonable in size (typical: <1KB)
-	maxNameListLength = 1024 * 1024 // 1MB safety limit
+	// Reduced to realistic limit based on actual SSH usage
+	maxNameListLength = 64 * 1024 // 64KB safety limit
+
+	// maxAlgorithmCount prevents DoS via excessive algorithm parsing
+	maxAlgorithmCount = 1000
+
+	// maxAlgorithmNameLength prevents DoS via single huge algorithm name
+	maxAlgorithmNameLength = 128
+
+	// maxTotalAlgorithms limits total algorithms across all name-lists
+	maxTotalAlgorithms = 5000
 
 	// SSH_MSG_KEXINIT message type
 	sshMsgKexInit = 20
+
+	// maxPayloadSize prevents DoS via huge KEXINIT packets
+	maxPayloadSize = 16 * 1024 // 16KB
+)
+
+var (
+	// ErrInvalidAlgorithmName is returned when an algorithm name contains invalid characters
+	ErrInvalidAlgorithmName = errors.New("invalid algorithm name")
+
+	// ErrTooManyAlgorithms is returned when algorithm count exceeds limits
+	ErrTooManyAlgorithms = errors.New("too many algorithms")
+
+	// ErrNameListTooLarge is returned when name-list exceeds size limit
+	ErrNameListTooLarge = errors.New("name-list too large")
+
+	// ErrBufferTooShort is returned when buffer is insufficient for data
+	ErrBufferTooShort = errors.New("buffer too short")
+
+	// ErrInvalidPacket is returned for malformed packets
+	ErrInvalidPacket = errors.New("invalid packet")
+
+	// ErrPanic is returned when a panic is recovered
+	ErrPanic = errors.New("panic during parsing")
 )
 
 // Fingerprint represents a HASSH fingerprint with client metadata
@@ -24,43 +59,133 @@ type Fingerprint struct {
 	RemoteAddr   string
 }
 
+// HashAlgorithm specifies which hash algorithm to use
+type HashAlgorithm int
+
+const (
+	// HashMD5 uses MD5 (original HASSH spec, fast but collision-prone)
+	HashMD5 HashAlgorithm = iota
+	// HashSHA256 uses SHA-256 (slower but collision-resistant)
+	HashSHA256
+)
+
+// isValidAlgorithmName validates algorithm name per SSH RFC specifications
+// Uses constant-time validation to prevent timing side-channels
+func isValidAlgorithmName(name string) bool {
+	if len(name) == 0 || len(name) > maxAlgorithmNameLength {
+		return false
+	}
+
+	// Constant-time validation: always check all bytes
+	// Prevents timing attacks that could fingerprint algorithm names
+	valid := true
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		// Must be ASCII printable (33-126), excluding comma (44)
+		if c < 33 || c > 126 || c == 44 {
+			valid = false
+			// Don't return early - continue to prevent timing leak
+		}
+	}
+
+	return valid
+}
+
+// sanitizeAlgorithmNames filters and validates algorithm names
+func sanitizeAlgorithmNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return []string{}, nil
+	}
+
+	// Count valid names first to avoid over-allocation
+	validCount := 0
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			validCount++
+		}
+	}
+
+	// Allocate exact capacity needed
+	result := make([]string, 0, validCount)
+
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue // Skip empty strings
+		}
+
+		// Validate algorithm name
+		if !isValidAlgorithmName(name) {
+			return nil, fmt.Errorf("%w: %q contains invalid characters", ErrInvalidAlgorithmName, name)
+		}
+
+		result = append(result, name)
+	}
+
+	return result, nil
+}
+
 // Calculate generates HASSH fingerprint from SSH key exchange algorithms
+// Uses MD5 by default for compatibility with original HASSH specification
 func Calculate(kex, ciphers, macs, compression []string) string {
+	return CalculateWithHash(kex, ciphers, macs, compression, HashMD5)
+}
+
+// CalculateWithHash generates fingerprint using specified hash algorithm
+func CalculateWithHash(kex, ciphers, macs, compression []string, algo HashAlgorithm) string {
 	algorithms := fmt.Sprintf("%s;%s;%s;%s",
 		strings.Join(kex, ","),
 		strings.Join(ciphers, ","),
 		strings.Join(macs, ","),
 		strings.Join(compression, ","))
 
-	hash := md5.Sum([]byte(algorithms)) // #nosec G401
-	return hex.EncodeToString(hash[:])
+	switch algo {
+	case HashSHA256:
+		hash := sha256.Sum256([]byte(algorithms))
+		return hex.EncodeToString(hash[:])
+	default: // HashMD5
+		hash := md5.Sum([]byte(algorithms)) // #nosec G401
+		return hex.EncodeToString(hash[:])
+	}
 }
 
-// parseNameList extracts SSH name-list from wire format
-func parseNameList(data []byte, offset int) ([]string, int, error) {
+// parseNameList extracts SSH name-list from wire format with comprehensive security checks
+// SECURITY: Includes panic recovery to prevent DoS via runtime panics
+func parseNameList(data []byte, offset int) (names []string, newOffset int, err error) {
+	// Panic recovery - prevents DoS via edge case panics
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrPanic, r)
+			names = nil
+			newOffset = offset
+		}
+	}()
+
+	// Validate offset bounds
+	if offset < 0 || offset >= len(data) {
+		return nil, offset, fmt.Errorf("%w: invalid offset %d for buffer length %d", ErrBufferTooShort, offset, len(data))
+	}
+
 	// Check if we have enough bytes to read the length field
 	if offset+4 > len(data) {
-		return nil, offset, fmt.Errorf("buffer too short for name-list length")
+		return nil, offset, fmt.Errorf("%w: cannot read name-list length at offset %d", ErrBufferTooShort, offset)
 	}
 
 	length := binary.BigEndian.Uint32(data[offset:])
 	offset += 4
 
-	// Validate length before any conversion or arithmetic to prevent:
-	// 1. Integer overflow on 32-bit systems when converting uint32 to int
-	// 2. DoS via excessive memory allocation
-	// 3. Integer overflow in offset+length calculation
+	// Validate length before any conversion or arithmetic
 	if length > maxNameListLength {
-		return nil, offset, fmt.Errorf("name-list too large: %d bytes (max: %d)", length, maxNameListLength)
+		return nil, offset, fmt.Errorf("%w: %d bytes (max: %d)", ErrNameListTooLarge, length, maxNameListLength)
 	}
 
-	// Safe to convert to int now - length is <= 1MB
+	// Safe to convert to int now
 	listLen := int(length)
 
-	// Check if we have enough remaining data
-	// Using subtraction to avoid potential overflow in offset+listLen
-	if offset > len(data)-listLen {
-		return nil, offset, fmt.Errorf("buffer too short for name-list data: need %d bytes, have %d", listLen, len(data)-offset)
+	// Check if we have enough remaining data (overflow-safe)
+	if listLen > len(data)-offset {
+		return nil, offset, fmt.Errorf("%w: need %d bytes for name-list, have %d", ErrBufferTooShort, listLen, len(data)-offset)
 	}
 
 	// Handle empty name-list
@@ -68,108 +193,156 @@ func parseNameList(data []byte, offset int) ([]string, int, error) {
 		return []string{}, offset, nil
 	}
 
-	// Extract name-list string
-	nameList := string(data[offset : offset+listLen])
+	// SECURITY FIX: Force string copy to prevent memory aliasing
+	// This prevents information disclosure if buffer is reused from a pool
+	dataCopy := make([]byte, listLen)
+	copy(dataCopy, data[offset:offset+listLen])
+	nameList := string(dataCopy)
 	offset += listLen
 
 	// Split into individual algorithm names
-	names := strings.Split(nameList, ",")
+	names = strings.Split(nameList, ",")
 
-	return names, offset, nil
+	// Enforce maximum algorithm count
+	if len(names) > maxAlgorithmCount {
+		return nil, offset, fmt.Errorf("%w: %d algorithms in name-list (max: %d)", ErrTooManyAlgorithms, len(names), maxAlgorithmCount)
+	}
+
+	// Sanitize and validate algorithm names
+	sanitized, err := sanitizeAlgorithmNames(names)
+	if err != nil {
+		return nil, offset, err
+	}
+
+	return sanitized, offset, nil
 }
 
 // ParseKexInit extracts algorithm lists from SSH_MSG_KEXINIT (RFC 4253 §7.1)
+// with comprehensive security validations and panic recovery
 //
-// RFC 4253 Section 7.1 specifies the complete packet structure:
-//   byte         SSH_MSG_KEXINIT (20)
-//   byte[16]     cookie (random bytes)
-//   name-list    kex_algorithms
-//   name-list    server_host_key_algorithms
-//   name-list    encryption_algorithms_client_to_server
-//   name-list    encryption_algorithms_server_to_client
-//   name-list    mac_algorithms_client_to_server
-//   name-list    mac_algorithms_server_to_client
-//   name-list    compression_algorithms_client_to_server
-//   name-list    compression_algorithms_server_to_client
-//   name-list    languages_client_to_server
-//   name-list    languages_server_to_client
-//   boolean      first_kex_packet_follows
-//   uint32       0 (reserved for future extension)
+// SECURITY: This is the primary public API and includes panic recovery to prevent
+// crashes from malformed input reaching production systems.
 func ParseKexInit(payload []byte) (kex, ciphers, macs, compression []string, err error) {
-	// Validate minimum packet size: 1 byte (msg type) + 16 bytes (cookie)
+	// Panic recovery at API boundary - critical for production security
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrPanic, r)
+			kex, ciphers, macs, compression = nil, nil, nil, nil
+		}
+	}()
+
+	return parseKexInitImpl(payload)
+}
+
+// ParseKexInitWithContext adds cancellation support for long-running operations
+func ParseKexInitWithContext(ctx context.Context, payload []byte) (kex, ciphers, macs, compression []string, err error) {
+	// Check if context is already cancelled
+	select {
+	case <-ctx.Done():
+		return nil, nil, nil, nil, ctx.Err()
+	default:
+	}
+
+	// Panic recovery at API boundary
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%w: %v", ErrPanic, r)
+			kex, ciphers, macs, compression = nil, nil, nil, nil
+		}
+	}()
+
+	return parseKexInitImpl(payload)
+}
+
+// parseKexInitImpl contains the actual parsing logic (separated for testing)
+func parseKexInitImpl(payload []byte) (kex, ciphers, macs, compression []string, err error) {
+	// Validate payload size
+	if len(payload) > maxPayloadSize {
+		return nil, nil, nil, nil, fmt.Errorf("%w: payload size %d exceeds maximum %d", ErrInvalidPacket, len(payload), maxPayloadSize)
+	}
+
+	// Validate minimum packet size
 	if len(payload) < 17 {
-		return nil, nil, nil, nil, fmt.Errorf("invalid KEXINIT packet: too short (%d bytes)", len(payload))
+		return nil, nil, nil, nil, fmt.Errorf("%w: too short (%d bytes, minimum 17)", ErrInvalidPacket, len(payload))
 	}
 
 	// Verify message type
 	if payload[0] != sshMsgKexInit {
-		return nil, nil, nil, nil, fmt.Errorf("invalid KEXINIT packet: wrong message type (got %d, expected %d)", payload[0], sshMsgKexInit)
+		return nil, nil, nil, nil, fmt.Errorf("%w: wrong message type (got %d, expected %d)", ErrInvalidPacket, payload[0], sshMsgKexInit)
 	}
 
 	// Skip message type (1) + cookie (16)
 	offset := 17
 
-	// Parse kex_algorithms (client preference)
-	if kex, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse kex_algorithms: %w", err)
+	// Track total algorithms to prevent accumulation DoS
+	totalAlgorithms := 0
+
+	// Helper to parse and track algorithm counts
+	parseAndTrack := func(payload []byte, offset int, fieldName string) ([]string, int, error) {
+		algorithms, newOffset, err := parseNameList(payload, offset)
+		if err != nil {
+			return nil, offset, fmt.Errorf("failed to parse %s: %w", fieldName, err)
+		}
+
+		totalAlgorithms += len(algorithms)
+		if totalAlgorithms > maxTotalAlgorithms {
+			return nil, newOffset, fmt.Errorf("%w: total algorithms %d exceeds limit %d", ErrTooManyAlgorithms, totalAlgorithms, maxTotalAlgorithms)
+		}
+
+		return algorithms, newOffset, nil
 	}
 
-	// Skip server_host_key_algorithms
-	if _, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse server_host_key_algorithms: %w", err)
+	// Parse all name-lists per RFC 4253 §7.1
+	if kex, offset, err = parseAndTrack(payload, offset, "kex_algorithms"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Parse encryption_algorithms_client_to_server
-	if ciphers, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse encryption_algorithms_client_to_server: %w", err)
+	if _, offset, err = parseAndTrack(payload, offset, "server_host_key_algorithms"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Skip encryption_algorithms_server_to_client
-	if _, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse encryption_algorithms_server_to_client: %w", err)
+	if ciphers, offset, err = parseAndTrack(payload, offset, "encryption_algorithms_client_to_server"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Parse mac_algorithms_client_to_server
-	if macs, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse mac_algorithms_client_to_server: %w", err)
+	if _, offset, err = parseAndTrack(payload, offset, "encryption_algorithms_server_to_client"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Skip mac_algorithms_server_to_client
-	if _, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse mac_algorithms_server_to_client: %w", err)
+	if macs, offset, err = parseAndTrack(payload, offset, "mac_algorithms_client_to_server"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Parse compression_algorithms_client_to_server
-	if compression, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse compression_algorithms_client_to_server: %w", err)
+	if _, offset, err = parseAndTrack(payload, offset, "mac_algorithms_server_to_client"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Skip compression_algorithms_server_to_client (RFC compliance)
-	if _, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse compression_algorithms_server_to_client: %w", err)
+	if compression, offset, err = parseAndTrack(payload, offset, "compression_algorithms_client_to_server"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Skip languages_client_to_server (RFC compliance)
-	if _, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse languages_client_to_server: %w", err)
+	if _, offset, err = parseAndTrack(payload, offset, "compression_algorithms_server_to_client"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Skip languages_server_to_client (RFC compliance)
-	if _, offset, err = parseNameList(payload, offset); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to parse languages_server_to_client: %w", err)
+	if _, offset, err = parseAndTrack(payload, offset, "languages_client_to_server"); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
-	// Skip first_kex_packet_follows (boolean - 1 byte)
+	if _, offset, err = parseAndTrack(payload, offset, "languages_server_to_client"); err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	// Validate first_kex_packet_follows (boolean - 1 byte)
 	if offset+1 > len(payload) {
-		return nil, nil, nil, nil, fmt.Errorf("buffer too short for first_kex_packet_follows")
+		return nil, nil, nil, nil, fmt.Errorf("%w: cannot read first_kex_packet_follows", ErrBufferTooShort)
 	}
 	offset++
 
-	// Skip reserved field (uint32 - 4 bytes)
+	// Validate reserved field (uint32 - 4 bytes)
 	if offset+4 > len(payload) {
-		return nil, nil, nil, nil, fmt.Errorf("buffer too short for reserved field")
+		return nil, nil, nil, nil, fmt.Errorf("%w: cannot read reserved field", ErrBufferTooShort)
 	}
-	// Don't need to advance offset since we're done parsing
 
 	return kex, ciphers, macs, compression, nil
 }

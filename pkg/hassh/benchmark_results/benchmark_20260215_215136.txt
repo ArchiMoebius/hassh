@@ -1,0 +1,61 @@
+PASS
+ok  	sshproxy/pkg/hassh	0.023s
+PASS
+ok  	sshproxy/pkg/hassh	0.410s
+goos: linux
+goarch: amd64
+pkg: sshproxy/pkg/hassh
+cpu: 13th Gen Intel(R) Core(TM) i5-13600K
+BenchmarkKEXINITParsing_RealWorld/OpenSSH_8.2-8         	 1951309	      2915 ns/op	 293.00 MB/s	    343088 parses/sec	    4443 B/op	      41 allocs/op
+BenchmarkKEXINITParsing_RealWorld/PuTTY_0.76-8          	 2134076	      2452 ns/op	 234.48 MB/s	    407799 parses/sec	    3161 B/op	      40 allocs/op
+BenchmarkKEXINITParsing_RealWorld/libssh_0.9-8          	 2304328	      2528 ns/op	 274.97 MB/s	    395645 parses/sec	    3562 B/op	      40 allocs/op
+BenchmarkKEXINITParsing_RealWorld/Dropbear_2020.81-8    	 2749345	      2299 ns/op	 221.41 MB/s	    434999 parses/sec	    2873 B/op	      40 allocs/op
+PASS
+ok  	sshproxy/pkg/hassh	33.902s
+goos: linux
+goarch: amd64
+pkg: sshproxy/pkg/hassh
+cpu: 13th Gen Intel(R) Core(TM) i5-13600K
+BenchmarkConnectionRate/concurrent_1-8         	    4094	   1953795 ns/op	       511.8 conn/sec	   97934 B/op	     606 allocs/op
+BenchmarkConnectionRate/concurrent_10-8        	   20371	    308113 ns/op	      3246 conn/sec	   97900 B/op	     606 allocs/op
+BenchmarkConnectionRate/concurrent_50-8        	   19754	    307778 ns/op	      3249 conn/sec	   97873 B/op	     605 allocs/op
+BenchmarkConnectionRate/concurrent_100-8       	   23052	    254031 ns/op	      3937 conn/sec	   97677 B/op	     604 allocs/op
+PASS
+ok  	sshproxy/pkg/hassh	35.228s
+goos: linux
+goarch: amd64
+pkg: sshproxy/pkg/hassh
+cpu: 13th Gen Intel(R) Core(TM) i5-13600K
+BenchmarkFingerprintCacheLookup/cache_hit-8         	482857440	        12.41 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFingerprintCacheLookup/cache_miss-8        	497573631	        12.17 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	sshproxy/pkg/hassh	14.572s
+goos: linux
+goarch: amd64
+pkg: sshproxy/pkg/hassh
+cpu: 13th Gen Intel(R) Core(TM) i5-13600K
+BenchmarkHashAlgorithms/MD5-8         	 9019093	       627.4 ns/op	   1593937 hashes/sec	     640 B/op	      11 allocs/op
+BenchmarkHashAlgorithms/SHA256-8      	11334286	       571.7 ns/op	   1749213 hashes/sec	     736 B/op	      12 allocs/op
+PASS
+ok  	sshproxy/pkg/hassh	13.385s
+goos: linux
+goarch: amd64
+pkg: sshproxy/pkg/hassh
+cpu: 13th Gen Intel(R) Core(TM) i5-13600K
+BenchmarkParsingComplexity/simple_5-8         	 3022999	      1791 ns/op	 196.54 MB/s	       187.4 MB/sec	    1920 B/op	      30 allocs/op
+BenchmarkParsingComplexity/medium_20-8        	  924639	      8835 ns/op	 266.22 MB/s	       253.9 MB/sec	   11200 B/op	      40 allocs/op
+BenchmarkParsingComplexity/complex_50-8       	  449524	     14700 ns/op	 234.82 MB/s	       223.9 MB/sec	   24960 B/op	      40 allocs/op
+BenchmarkParsingComplexity/large_80-8         	  276981	     23800 ns/op	 199.67 MB/s	       190.4 MB/sec	   37760 B/op	      40 allocs/op
+PASS
+ok  	sshproxy/pkg/hassh	42.065s
+goos: linux
+goarch: amd64
+pkg: sshproxy/pkg/hassh
+cpu: 13th Gen Intel(R) Core(TM) i5-13600K
+BenchmarkMemoryAllocation/with_allocation-8         	 1776112	      3386 ns/op	    4443 B/op	      41 allocs/op
+BenchmarkMemoryAllocation/parse_only-8              	 2745978	      1920 ns/op	    2896 B/op	      30 allocs/op
+BenchmarkMemoryAllocation/calculate_only-8          	 5927610	      1134 ns/op	    1545 B/op	      11 allocs/op
+PASS
+ok  	sshproxy/pkg/hassh	24.938s
+PASS
+ok  	sshproxy/pkg/hassh	1.063s
