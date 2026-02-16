@@ -59,7 +59,7 @@ upx:
 archives:
   - id: hassh
     ids: [sshctl, sshproxy]
-  - formats: [ 'zst', 'tgz' ]
+  - formats: [ 'tgz' ]
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
