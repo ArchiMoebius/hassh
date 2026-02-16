@@ -60,6 +60,7 @@ archives:
     ids: [sshctl, sshproxy]
     formats: ['tgz']
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    strip_binary_directory: true
     files:
       - README.md
       - LICENSE
