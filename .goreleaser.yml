@@ -47,21 +47,22 @@ builds:
     mod_timestamp: '{{ .CommitTimestamp }}'
 
 upx:
-  -
-    ids: [ sshctl, sshproxy ]
+  - ids: [sshctl, sshproxy]
     enabled: true
     compress: best
     lzma: true
     brute: true
-    goos: [ linux ]
-    goarch: [ amd64, arm64 ]
+    goos: [linux]
+    goarch: [amd64, arm64]
 
 archives:
-  -
+  - id: default
     ids: [sshctl, sshproxy]
-  - formats: [ 'tgz' ]
-  - name_template: "{{ .Name }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    files: [README.md, LICENSE]
+    formats: ['tgz']
+    name_template: "{{ .Name }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
 
 release:
   ids: [ sshctl, sshproxy ]
