@@ -18,7 +18,7 @@ builds:
     main: ./cmd/sshctl
     binary: sshctl
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos: [linux]
     goarch: [amd64]
     ldflags:
@@ -34,7 +34,7 @@ builds:
     main: ./cmd/sshproxy
     binary: sshproxy
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
     goos: [linux]
     goarch: [amd64]
     ldflags:

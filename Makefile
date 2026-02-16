@@ -18,8 +18,8 @@ all: linux
 # goreleaser build --config .goreleaser.yml --snapshot --clean
 
 linux: lint security
-	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${DIR}/hassh-proxy-linux_amd64 cmd/sshproxy/main.go
-	@env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${DIR}/hassh-ctl-linux_amd64 cmd/sshctl/main.go
+	@env CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${DIR}/hassh-proxy-linux_amd64 cmd/sshproxy/main.go
+	@env CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath ${LDFLAGS} ${GCFLAGS} ${ASMFLAGS} -o ${DIR}/hassh-ctl-linux_amd64 cmd/sshctl/main.go
 
 tidy:
 	@go mod tidy
