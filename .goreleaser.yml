@@ -59,7 +59,7 @@ archives:
   - id: default
     ids: [sshctl, sshproxy]
     formats: ['tgz']
-    name_template: "{{ .Name }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
       - LICENSE
