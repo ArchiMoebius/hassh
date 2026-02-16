@@ -1,4 +1,3 @@
-// cmd/sshctl/tui/tui.go
 package tui
 
 import (

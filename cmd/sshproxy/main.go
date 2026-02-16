@@ -1,4 +1,3 @@
-// cmd/sshproxy/main.go
 package main
 
 import (

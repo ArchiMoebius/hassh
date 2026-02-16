@@ -7,6 +7,27 @@ import (
 	"gorm.io/gorm"
 )
 
+// ConnectionDetail contains denormalized connection information for display
+type ConnectionDetail struct {
+	ID               uint
+	Timestamp        time.Time
+	IPAddress        string
+	HASSHFingerprint string
+	SSHClientBanner  string
+	Blocked          bool
+}
+
+// HASSHSummary contains aggregated information about a HASSH fingerprint
+type HASSHSummary struct {
+	HASSHFingerprint string
+	SSHClientBanner  string
+	IPCount          int
+	LastSeen         time.Time
+	FirstSeen        time.Time
+	TotalConnections int
+	Blocked          bool
+}
+
 // IPAddress stores unique IP addresses in binary format
 type IPAddress struct {
 	ID        uint      `gorm:"primaryKey;column:id"`
@@ -238,16 +259,6 @@ func (r *Repository) LoadBlockedHashes() ([]string, error) {
 		Pluck("hassh_fingerprints.fingerprint", &fingerprints).Error
 
 	return fingerprints, err
-}
-
-// ConnectionDetail contains denormalized connection information for display
-type ConnectionDetail struct {
-	ID               uint
-	Timestamp        time.Time
-	IPAddress        string
-	HASSHFingerprint string
-	SSHClientBanner  string
-	Blocked          bool
 }
 
 // ListConnections retrieves connections with filtering and sorting
@@ -544,17 +555,6 @@ func (r *Repository) GetStatistics() (struct {
 	r.db.Model(&SSHClientBanner{}).Count(&stats.UniqueBanners)
 
 	return stats, nil
-}
-
-// HASSHSummary contains aggregated information about a HASSH fingerprint
-type HASSHSummary struct {
-	HASSHFingerprint string
-	SSHClientBanner  string
-	IPCount          int
-	LastSeen         time.Time
-	FirstSeen        time.Time
-	TotalConnections int
-	Blocked          bool
 }
 
 // ListHASSHSummaries retrieves aggregated HASSH fingerprint information

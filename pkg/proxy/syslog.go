@@ -1,4 +1,3 @@
-// pkg/proxy/syslog.go
 package proxy
 
 import (
@@ -13,7 +12,6 @@ type SyslogWriter struct {
 
 // NewSyslogWriter creates a syslog writer for SSH proxy events
 func NewSyslogWriter() (*SyslogWriter, error) {
-	// Use LOG_AUTH facility to write to auth.log
 	w, err := syslog.New(syslog.LOG_AUTH|syslog.LOG_INFO, "sshproxy")
 	if err != nil {
 		return nil, err

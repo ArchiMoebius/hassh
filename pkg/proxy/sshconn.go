@@ -1,4 +1,3 @@
-// pkg/proxy/sshconn.go
 package proxy
 
 import (

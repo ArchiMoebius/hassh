@@ -1,4 +1,3 @@
-// cmd/sshctl/main.go
 package main
 
 import (
